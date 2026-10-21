@@ -1,0 +1,95 @@
+# Freight Rate Prediction Challenge
+
+Predict posted truckload rates for 12,000 validation loads and produce the fixed
+Lexington → Fort Wayne December 2025 rate chart.
+
+## Results
+
+| Evaluation | RMSE | MAE | MAPE | R² |
+| --- | ---: | ---: | ---: | ---: |
+| January–August → September–October holdout (cleaned) | $113.18 | $43.80 | 1.84% | 0.9933 |
+| January–August → September–October holdout (all labels) | $630.80 | $98.49 | 4.34% | 0.8291 |
+| Median-rate baseline (cleaned) | $1,420.07 | $1,108.93 | 67.92% | -0.0569 |
+
+The gap between the cleaned and full holdout is caused by 142 corrupted labels in
+the holdout period. There are exactly 335 training rates below $1.20/mile and 335
+above $4.50/mile; those anomalies are randomly distributed and are not predictable
+from the supplied features.
+
+## Approach
+
+- **Time-based validation.** The labeled data covers January–October 2025 and the
+  validation set covers November–December. Random splits would leak across time, so
+  the model is selected with forward folds: January–August → September–October and
+  January–July → August–September.
+- **Cleaning.** Sign-flipped weights are converted with `abs(weight)`, missing
+  weights are imputed by equipment median, and corrupted rate labels outside
+  `[1.20, 4.50]` dollars per mile are excluded from fitting.
+- **Features.** Log target, log distance, log weight, equipment indicators,
+  squared/interaction terms, day-of-week indicators, and out-of-fold smoothed
+  target encodings for pickup city, delivery city, and lane.
+- **Model.** Ridge regression on `log(posted_rate)`, selected over a grid of
+  regularization strengths. The final model uses alpha 1.0 and is refit on all
+  47,330 clean training rows.
+- **Outlier handling.** Predictions are clipped to the clean rate-per-mile range.
+  Corrupted validation labels cannot be recovered, so no attempt is made to chase
+  them.
+- **December.** The final model intentionally does not use `market_index` or
+  `quote_signal`; their relationship to rates was unstable in the forward holdout,
+  and the December inputs do not provide them. The December curve reflects the
+  learned weekday pattern and fixed lane/distance/weight/equipment inputs.
+
+## Setup
+
+Tested with Python 3.14.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+python freight_rate.py
+python score.py --predictions validation_predictions.csv --december-predictions data/december-chart-inputs.csv
+python make_report.py
+```
+
+`freight_rate.py` performs validation, refits the selected model, writes
+`validation_predictions.csv`, fills `data/december-chart-inputs.csv`, and saves
+metrics, plots, and the model artifact. `score.py` is the supplied scorer and
+creates `scorer_results/candidate_december.png`. `make_report.py` rebuilds the
+DOCX/PDF report from the saved metrics.
+
+## Outputs
+
+- `validation_predictions.csv` — 12,000 rows, exactly `load_id,predicted_rate`
+- `data/december-chart-inputs.csv` — completed with 31 predictions
+- `scorer_results/candidate_december.png` — official scorer chart
+- `report/Freight_Rate_Report.pdf` and `.docx` — validation write-up
+- `report/loom_script.md` — 2–3 minute walkthrough outline
+- `reports/metrics.json`, `reports/model_comparison.csv`, `reports/holdout_predictions.csv`
+- `models/freight_rate_model.joblib` — fitted base model, encoder, scaler, and Ridge model
+
+## Project structure
+
+```text
+data/                       supplied data and completed December inputs
+freight_rate.py             cleaning, feature engineering, validation, final model, predictions
+score.py                    supplied scorer and official chart generator
+make_report.py              DOCX/PDF report generator
+reports/                    metrics, model comparison, holdout predictions, plots
+report/                     final report and Loom outline
+models/                     serialized fitted model
+```
+
+## Notes
+
+- The supplied distance is used directly; it is approximately 1.20× the
+  great-circle distance, consistent with road routing.
+- Validation has 1,461 loads on unseen lanes (12.2%). Smoothed pickup/delivery
+  encodings and the base distance–weight–equipment model provide the fallback.
+- The existing `.venv/` directory in the repository was created on Windows. Create
+  a fresh virtual environment on your machine using the setup commands above.
