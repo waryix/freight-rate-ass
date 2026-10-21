@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -461,6 +462,31 @@ def build_document(metrics: dict, comparison: pd.DataFrame) -> Document:
     return document
 
 
+def generate_official_chart() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "score.py"),
+            "--predictions",
+            str(ROOT / "validation_predictions.csv"),
+            "--december-predictions",
+            str(ROOT / "data" / "december-chart-inputs.csv"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "score.py failed while generating the December chart:\n"
+            f"{result.stdout}{result.stderr}"
+        )
+    chart = ROOT / "scorer_results" / "candidate_december.png"
+    if not chart.is_file() or chart.stat().st_size == 0:
+        raise RuntimeError(f"score.py did not create {chart}")
+    print(result.stdout.strip())
+
+
 def convert_to_pdf() -> None:
     try:
         subprocess.run(
@@ -484,6 +510,7 @@ def convert_to_pdf() -> None:
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    generate_official_chart()
     metrics = load_metrics()
     comparison = pd.read_csv(REPORT_DIR / "model_comparison.csv")
     document = build_document(metrics, comparison)
